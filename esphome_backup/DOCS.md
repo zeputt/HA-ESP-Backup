@@ -1,10 +1,10 @@
-# ESPHome Backup 0.3.0
+# ESPHome Backup 0.3.1
 
 ESPHome Backup säkerhetskopierar `/config/esphome` från Home Assistant till en skrivbar Home Assistant-lagringsmount.
 
 ## Webbgränssnitt
 
-Version 0.3.0 har ett Ingress-gränssnitt. Efter uppdatering och start visas **OPEN WEB UI** på appens infosida och ESPHome Backup kan även visas som en Home Assistant-panel.
+Version 0.3.1 har ett Ingress-gränssnitt. Efter uppdatering och start visas **OPEN WEB UI** på appens infosida och ESPHome Backup kan även visas som en Home Assistant-panel.
 
 GUI:t visar:
 
@@ -58,3 +58,7 @@ git clone esphome-config.bundle esphome-restored
 ## Säkerhet
 
 Home Assistant-konfigurationen är monterad read-only. GUI:t använder Home Assistant Ingress och accepterar endast trafik från Supervisors Ingress-proxy. Ingen separat webbport publiceras på Home Assistant-värden.
+
+
+### GUI 0.3.1
+Git-historik och live runtime-logg visas i Ingress-gränssnittet. Sätt `destination_url` till en webbadress för NAS:ens File Station eller motsvarande om destinationen ska vara klickbar.

@@ -13,10 +13,12 @@ UI_FILE = Path("/ui.html")
 def start_web_server(
     status_provider: Callable[[], dict[str, Any]],
     manual_backup: Callable[[], bool],
+    log_provider: Callable[[int, int], dict[str, Any]],
+    git_history_provider: Callable[[int], dict[str, Any]],
     port: int = 8099,
 ) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "ESPHomeBackup/0.3.0"
+        server_version = "ESPHomeBackup/0.3.1"
 
         def log_message(self, fmt: str, *args: Any) -> None:
             LOG.debug("Web: " + fmt, *args)
@@ -48,8 +50,23 @@ def start_web_server(
             if path == "/api/status" or path.endswith("/api/status"):
                 self.send_json(status_provider())
                 return
+            if path == "/api/log" or path.endswith("/api/log"):
+                query = urlparse(self.path).query
+                params = {}
+                for item in query.split("&") if query else []:
+                    if "=" in item:
+                        k, v = item.split("=", 1); params[k] = v
+                try:
+                    after = int(params.get("after", "0"))
+                except ValueError:
+                    after = 0
+                self.send_json(log_provider(after, 300))
+                return
+            if path == "/api/git-history" or path.endswith("/api/git-history"):
+                self.send_json(git_history_provider(40))
+                return
             if path == "/health" or path.endswith("/health"):
-                self.send_json({"status": "ok", "version": "0.3.0"})
+                self.send_json({"status": "ok", "version": "0.3.1"})
                 return
             try:
                 body = UI_FILE.read_bytes()

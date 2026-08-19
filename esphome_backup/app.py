@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import datetime as dt
+from collections import deque
 import hashlib
 import json
 import logging
@@ -28,9 +29,36 @@ TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 STATE_FILE = Path("/data/runtime-status.json")
 BACKUP_LOCK = threading.Lock()
 STATE_LOCK = threading.Lock()
+LOG_BUFFER_LOCK = threading.Lock()
+LOG_BUFFER: deque[dict[str, Any]] = deque(maxlen=600)
+LOG_SEQUENCE = 0
+
+
+class RuntimeLogHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        global LOG_SEQUENCE
+        try:
+            message = self.format(record)
+            with LOG_BUFFER_LOCK:
+                LOG_SEQUENCE += 1
+                LOG_BUFFER.append({
+                    "seq": LOG_SEQUENCE,
+                    "time": dt.datetime.fromtimestamp(record.created).astimezone().isoformat(timespec="milliseconds"),
+                    "level": record.levelname.lower(),
+                    "message": message,
+                })
+        except Exception:
+            pass
+
+
+_runtime_handler = RuntimeLogHandler()
+_runtime_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+logging.getLogger().addHandler(_runtime_handler)
+
+
 RUNTIME_STATE: dict[str, Any] = {
     "status": "starting",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "running": False,
     "trigger": None,
     "last_run": None,
@@ -64,7 +92,7 @@ def load_runtime_state() -> None:
         if isinstance(data, dict):
             with STATE_LOCK:
                 RUNTIME_STATE.update(data)
-                RUNTIME_STATE["version"] = "0.3.0"
+                RUNTIME_STATE["version"] = "0.3.1"
                 RUNTIME_STATE["running"] = False
                 if RUNTIME_STATE.get("status") == "running":
                     RUNTIME_STATE["status"] = "starting"
@@ -81,6 +109,7 @@ def runtime_snapshot() -> dict[str, Any]:
         opts = {}
     state["options"] = {
         "destination": opts.get("destination"),
+        "destination_url": opts.get("destination_url", ""),
         "schedule": opts.get("schedule"),
         "create_archive": opts.get("create_archive"),
         "create_bundles": opts.get("create_bundles"),
@@ -112,6 +141,43 @@ def runtime_snapshot() -> dict[str, Any]:
         except Exception:
             state["archives"] = []
     return state
+
+
+
+def runtime_log_snapshot(after: int = 0, limit: int = 250) -> dict[str, Any]:
+    with LOG_BUFFER_LOCK:
+        lines = [dict(x) for x in LOG_BUFFER if int(x.get("seq", 0)) > after]
+        current = LOG_SEQUENCE
+    if len(lines) > limit:
+        lines = lines[-limit:]
+    return {"lines": lines, "last_seq": current}
+
+
+def git_history_snapshot(limit: int = 40) -> dict[str, Any]:
+    repo = Path("/data/git/repo")
+    if not (repo / ".git").is_dir():
+        return {"enabled": False, "commits": []}
+    try:
+        cp = run([
+            "git", "log", f"-{max(1, min(limit, 100))}",
+            "--date=iso-strict",
+            "--pretty=format:%H%x1f%h%x1f%aI%x1f%an%x1f%s",
+        ], cwd=repo)
+        commits = []
+        for line in cp.stdout.splitlines():
+            parts = line.split("\x1f", 4)
+            if len(parts) != 5:
+                continue
+            full, short, authored, author, subject = parts
+            stat = run(["git", "show", "--shortstat", "--format=", full], cwd=repo, check=False).stdout.strip()
+            commits.append({
+                "commit": full, "short_commit": short, "date": authored,
+                "author": author, "message": subject, "stat": stat,
+            })
+        return {"enabled": True, "commits": commits}
+    except Exception as exc:
+        LOG.warning("Kunde inte läsa Git-historik: %s", exc)
+        return {"enabled": True, "commits": [], "error": str(exc)}
 
 
 def load_options() -> dict[str, Any]:
@@ -664,8 +730,8 @@ def next_scheduled_run(schedule: str, now: dt.datetime | None = None) -> dt.date
 def main() -> int:
     load_runtime_state()
     opts = load_options()
-    LOG.info("ESPHome Backup 0.3.0 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
-    start_web_server(runtime_snapshot, request_manual_backup, port=8099)
+    LOG.info("ESPHome Backup 0.3.1 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
+    start_web_server(runtime_snapshot, request_manual_backup, runtime_log_snapshot, git_history_snapshot, port=8099)
 
     if opts.get("run_on_start"):
         run_backup_safe("startup")

@@ -2,7 +2,7 @@
 
 Automatisk och verifierad backup av Home Assistants ESPHome-konfigurationer till `/share`, `/media` eller `/backup`.
 
-Version 0.3.0 introducerar ett Ingress-baserat webbgränssnitt i Home Assistant med statusöversikt och manuell **Backup now**.
+Version 0.3.1 introducerar ett Ingress-baserat webbgränssnitt i Home Assistant med statusöversikt och manuell **Backup now**.
 
 ## Funktioner
 
@@ -17,3 +17,7 @@ Version 0.3.0 introducerar ett Ingress-baserat webbgränssnitt i Home Assistant 
 - manuell backup med överlappningsskydd
 
 Se `DOCS.md` för installation och konfiguration.
+
+
+### GUI 0.3.1
+Git-historik och live runtime-logg visas i Ingress-gränssnittet. Sätt `destination_url` till en webbadress för NAS:ens File Station eller motsvarande om destinationen ska vara klickbar.

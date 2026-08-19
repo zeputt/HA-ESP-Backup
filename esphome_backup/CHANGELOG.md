@@ -1,6 +1,12 @@
 # Changelog
 
-## 0.3.0
+## 0.3.1
+- Git-historik visas direkt i Ingress-GUI:t.
+- Live runtime-logg visas under körning och behåller de senaste loggraderna.
+- Ny valfri `destination_url` gör destinationen klickbar och öppnar den i ny flik.
+- Nya Ingress-API:er: `/api/log` och `/api/git-history`.
+
+## 0.3.1
 
 - Nytt Home Assistant Ingress GUI.
 - Dashboard för backupstatus, schema, destination, filer, bundles, Git och arkiv.
