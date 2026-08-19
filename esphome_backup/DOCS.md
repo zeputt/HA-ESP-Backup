@@ -48,3 +48,7 @@ För Synology rekommenderas att en nätverkslagring monteras i Home Assistant oc
 
 ## Säkerhet
 Om `include_secrets: true` används kommer `secrets.yaml` att finnas i backupen. Destinationen ska därför behandlas som känslig backupdata.
+
+
+## v0.2.1
+NAS-vänligare rsync, destinationsverifiering och korrigerad schemaläggning.

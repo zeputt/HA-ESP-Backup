@@ -10,3 +10,7 @@ Funktioner:
 - valfria `esphome bundle`-paket
 - status till Home Assistant via Core API
 - stöd för destination under `/share`, `/media` eller `/backup`
+
+
+## v0.2.1
+NAS-vänligare rsync, destinationsverifiering och korrigerad schemaläggning.

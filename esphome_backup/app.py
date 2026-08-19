@@ -52,7 +52,22 @@ def publish_status(status: str, **extra: Any) -> None:
 
 def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
     LOG.debug("Kör: %s", " ".join(cmd))
-    return subprocess.run(cmd, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=check)
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=check,
+        )
+    except subprocess.CalledProcessError as exc:
+        output = (exc.stdout or "").strip()
+        LOG.error("Kommando misslyckades (exit %s): %s", exc.returncode, " ".join(cmd))
+        if output:
+            LOG.error("Kommando-output:\n%s", output)
+        raise
+    return result
 
 
 def sha256(path: Path) -> str:
@@ -78,11 +93,80 @@ def sync_latest(source: Path, latest: Path, include_secrets: bool) -> None:
     excludes = ["--exclude=.esphome/", "--exclude=.git/", "--exclude=*.bin", "--exclude=*.elf"]
     if not include_secrets:
         excludes += ["--exclude=secrets.yaml", "--exclude=secrets.yml"]
-    cmd = ["rsync", "-a", "--delete", *excludes, f"{source}/", f"{latest}/"]
+
+    # NAS/SMB-vänlig synk. Vi behöver innehåll, katalogstruktur och filtid, inte
+    # Unix owner/group/permissions som ofta ger rsync exit 23 på nätverkslagring.
+    cmd = [
+        "rsync",
+        "-rt",
+        "--delete",
+        "--no-perms",
+        "--no-owner",
+        "--no-group",
+        "--omit-dir-times",
+        "--itemize-changes",
+        *excludes,
+        f"{source}/",
+        f"{latest}/",
+    ]
     result = run(cmd)
     if result.stdout.strip():
-        LOG.info(result.stdout.strip())
+        LOG.info("rsync:\n%s", result.stdout.strip())
 
+
+
+def _excluded_from_backup(relative: Path, include_secrets: bool) -> bool:
+    parts = relative.parts
+    if ".esphome" in parts or ".git" in parts:
+        return True
+    if relative.suffix.lower() in {".bin", ".elf"}:
+        return True
+    if not include_secrets and relative.name in {"secrets.yaml", "secrets.yml"}:
+        return True
+    return False
+
+
+def verify_latest(source: Path, latest: Path, include_secrets: bool) -> tuple[int, int]:
+    """Verify that all regular source files copied to latest have identical content."""
+    expected: dict[Path, Path] = {}
+    for path in source.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(source)
+        if _excluded_from_backup(rel, include_secrets):
+            continue
+        expected[rel] = path
+
+    if not expected:
+        raise RuntimeError("Inga filer hittades att verifiera efter backup")
+
+    missing: list[str] = []
+    mismatched: list[str] = []
+    verified_bytes = 0
+
+    for rel, src in expected.items():
+        dst = latest / rel
+        if not dst.is_file():
+            missing.append(str(rel))
+            continue
+        if src.stat().st_size != dst.stat().st_size or sha256(src) != sha256(dst):
+            mismatched.append(str(rel))
+            continue
+        verified_bytes += src.stat().st_size
+
+    if missing or mismatched:
+        details = []
+        if missing:
+            details.append("saknas: " + ", ".join(missing[:20]))
+        if mismatched:
+            details.append("avviker: " + ", ".join(mismatched[:20]))
+        raise RuntimeError(
+            f"Verifiering av destination misslyckades ({len(missing)} saknas, "
+            f"{len(mismatched)} avviker): " + "; ".join(details)
+        )
+
+    LOG.info("Verifiering OK: %s filer, %s byte", len(expected), verified_bytes)
+    return len(expected), verified_bytes
 
 def make_bundles(source: Path, bundle_dir: Path, yamls: list[Path]) -> tuple[int, list[str]]:
     bundle_dir.mkdir(parents=True, exist_ok=True)
@@ -222,6 +306,7 @@ def backup_once(opts: dict[str, Any]) -> None:
         raise RuntimeError("Inga ESPHome YAML-filer hittades")
 
     sync_latest(SOURCE, latest, opts["include_secrets"])
+    verified_files, verified_bytes = verify_latest(SOURCE, latest, opts["include_secrets"])
 
     bundles_ok = 0
     bundle_failures: list[str] = []
@@ -268,22 +353,27 @@ def backup_once(opts: dict[str, Any]) -> None:
         archives_pruned=removed,
         git=git_result,
         duration_seconds=round(duration, 2),
+        verified_files=verified_files,
+        verified_bytes=verified_bytes,
     )
-    LOG.info("Backup klar: %s enheter, destination %s, %.1fs", device_count, destination, duration)
+    LOG.info(
+        "Backup klar och verifierad: %s enheter, %s filer, destination %s, %.1fs",
+        device_count, verified_files, destination, duration
+    )
 
 
-def seconds_until(schedule: str) -> int:
+def next_scheduled_run(schedule: str, now: dt.datetime | None = None) -> dt.datetime:
     hour, minute = map(int, schedule.split(":"))
-    now = dt.datetime.now().astimezone()
+    now = now or dt.datetime.now().astimezone()
     target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if target <= now:
         target += dt.timedelta(days=1)
-    return max(1, int((target - now).total_seconds()))
+    return target
 
 
 def main() -> int:
     opts = load_options()
-    LOG.info("ESPHome Backup 0.2.0 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
+    LOG.info("ESPHome Backup 0.2.1 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
 
     if opts.get("run_on_start"):
         try:
@@ -294,8 +384,9 @@ def main() -> int:
 
     while True:
         opts = load_options()
-        wait = seconds_until(opts["schedule"])
-        next_run = dt.datetime.now().astimezone() + dt.timedelta(seconds=wait)
+        now = dt.datetime.now().astimezone()
+        next_run = next_scheduled_run(opts["schedule"], now)
+        wait = max(1.0, (next_run - now).total_seconds())
         ha_state("sensor.esphome_backup_next_run", next_run.isoformat(), {
             "friendly_name": "ESPHome Backup Next Run",
             "device_class": "timestamp",
