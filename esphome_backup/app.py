@@ -279,30 +279,94 @@ def prune_archives(archives: Path, keep_daily: int, keep_weekly: int, keep_month
     return removed
 
 
-def git_commit(config_source: Path, git_repo: Path, opts: dict[str, Any]) -> str:
-    """Mirror verified config into a dedicated Git repository and commit changes."""
+def _git_head(repo: Path) -> str:
+    return run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+
+
+def _git_commit_count(repo: Path) -> int:
+    return int(run(["git", "rev-list", "--count", "HEAD"], cwd=repo).stdout.strip())
+
+
+def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def export_git_bundle(git_repo: Path, destination_git: Path, branch: str) -> dict[str, Any]:
+    """Export the local persistent Git history as a portable bundle on backup storage."""
+    destination_git.mkdir(parents=True, exist_ok=True)
+    bundle_target = destination_git / "esphome-config.bundle"
+    status_target = destination_git / "git-status.json"
+
+    # Build the bundle on the app's local persistent filesystem first. This keeps
+    # active Git metadata and temporary Git writes away from SMB/NFS entirely.
+    local_bundle = git_repo.parent / "esphome-config.bundle.tmp"
+    local_bundle.unlink(missing_ok=True)
+    run(["git", "bundle", "create", str(local_bundle), "--all"], cwd=git_repo)
+    run(["git", "bundle", "verify", str(local_bundle)], cwd=git_repo)
+
+    # Copy to the network destination using a temporary name and then publish it.
+    network_tmp = destination_git / ".esphome-config.bundle.tmp"
+    shutil.copyfile(local_bundle, network_tmp)
+    os.replace(network_tmp, bundle_target)
+    local_bundle.unlink(missing_ok=True)
+
+    # Verify the exact file that now resides on backup storage, not merely the
+    # locally generated temporary bundle.
+    verify = run(["git", "bundle", "verify", str(bundle_target)], cwd=git_repo)
+    head = _git_head(git_repo)
+    commits = _git_commit_count(git_repo)
+    now = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    status = {
+        "status": "ok",
+        "branch": branch,
+        "commit": head,
+        "short_commit": head[:12],
+        "commits": commits,
+        "last_export": now,
+        "bundle": str(bundle_target),
+        "bundle_size": bundle_target.stat().st_size,
+        "bundle_verified": True,
+        "verify_output": (verify.stdout or "").strip(),
+    }
+    write_json_atomic(status_target, status)
+    LOG.info(
+        "Git bundle verifierad: %s commits, HEAD %s, %s byte",
+        commits, head[:12], bundle_target.stat().st_size,
+    )
+    return status
+
+
+def git_commit(config_source: Path, git_repo: Path, destination_git: Path, opts: dict[str, Any]) -> dict[str, Any]:
+    """Version verified config locally under /data and export a portable bundle."""
     git_repo.mkdir(parents=True, exist_ok=True)
     git_dir = git_repo / ".git"
+    branch = str(opts["git_branch"])
+
     if not git_dir.is_dir():
-        run(["git", "init", "-b", opts["git_branch"]], cwd=git_repo)
+        run(["git", "init", "-b", branch], cwd=git_repo)
 
     run(["git", "config", "user.name", opts["git_user_name"]], cwd=git_repo)
     run(["git", "config", "user.email", opts["git_user_email"]], cwd=git_repo)
 
-    # Keep .git outside rsync deletion semantics while mirroring current config.
+    # Mirror only the verified backup into the working tree. The active .git
+    # directory stays on /data and is never placed on the Synology share.
     run([
         "rsync", "-rt", "--delete", "--no-perms", "--no-owner", "--no-group",
         "--omit-dir-times", "--exclude=.git/", f"{config_source}/", f"{git_repo}/",
     ])
     run(["git", "add", "-A"], cwd=git_repo)
     status = run(["git", "status", "--porcelain"], cwd=git_repo).stdout.strip()
-    result = "unchanged"
+    action = "unchanged"
     if status:
         stamp = dt.datetime.now().astimezone().isoformat(timespec="seconds")
         run(["git", "commit", "-m", f"ESPHome backup {stamp}"], cwd=git_repo)
-        result = "committed"
+        action = "committed"
 
     remote = str(opts.get("git_remote", "")).strip()
+    pushed = False
     if remote:
         existing = run(["git", "remote"], cwd=git_repo).stdout.split()
         if "origin" in existing:
@@ -310,9 +374,16 @@ def git_commit(config_source: Path, git_repo: Path, opts: dict[str, Any]) -> str
         else:
             run(["git", "remote", "add", "origin", remote], cwd=git_repo)
         if opts.get("git_push"):
-            run(["git", "push", "-u", "origin", opts["git_branch"]], cwd=git_repo)
-            result += "+pushed"
-    return result
+            run(["git", "push", "-u", "origin", branch], cwd=git_repo)
+            pushed = True
+
+    bundle_status = export_git_bundle(git_repo, destination_git, branch)
+    return {
+        "action": action,
+        "pushed": pushed,
+        "repo": str(git_repo),
+        **bundle_status,
+    }
 
 def backup_once(opts: dict[str, Any]) -> None:
     started = dt.datetime.now().astimezone()
@@ -331,7 +402,8 @@ def backup_once(opts: dict[str, Any]) -> None:
     latest_config = latest / "config"
     bundles = latest / "bundles"
     archives = destination / "archive"
-    git_repo = destination / "git" / "repo"
+    git_repo = Path("/data/git/repo")
+    destination_git = destination / "git"
     destination.mkdir(parents=True, exist_ok=True)
 
     yamls = collect_yaml(SOURCE, opts["include_secrets"])
@@ -364,14 +436,14 @@ def backup_once(opts: dict[str, Any]) -> None:
             components["bundles"] = {"status": "error", "created": bundles_ok, "failures": bundle_failures, "error": str(exc)}
             warnings.append(f"bundle-steget: {exc}")
 
-    git_result = "disabled"
+    git_result: dict[str, Any] | str = "disabled"
     if opts.get("git_enabled"):
         try:
-            git_result = git_commit(latest_config, git_repo, opts)
-            components["git"] = {"status": "ok", "result": git_result, "repo": str(git_repo)}
+            git_result = git_commit(latest_config, git_repo, destination_git, opts)
+            components["git"] = {"status": "ok", "result": git_result, "repo": str(git_repo), "bundle": str(destination_git / "esphome-config.bundle")}
         except Exception as exc:
             LOG.exception("Git-versionering misslyckades, men den verifierade filbackupen behålls")
-            components["git"] = {"status": "error", "result": "failed", "error": str(exc), "repo": str(git_repo)}
+            components["git"] = {"status": "error", "result": "failed", "error": str(exc), "repo": str(git_repo), "bundle": str(destination_git / "esphome-config.bundle")}
             warnings.append(f"git: {exc}")
 
     archive_path = None
@@ -443,7 +515,7 @@ def next_scheduled_run(schedule: str, now: dt.datetime | None = None) -> dt.date
 
 def main() -> int:
     opts = load_options()
-    LOG.info("ESPHome Backup 0.2.2 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
+    LOG.info("ESPHome Backup 0.2.3 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
 
     if opts.get("run_on_start"):
         try:

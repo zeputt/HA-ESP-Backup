@@ -1,6 +1,6 @@
 name: "ESPHome Backup"
 description: "Automated backup, retention, bundles and optional Git versioning for ESPHome YAML configurations."
-version: "0.2.2"
+version: "0.2.3"
 slug: "esphome_backup"
 init: false
 startup: application

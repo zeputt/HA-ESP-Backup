@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.3
+- Flyttar aktivt Git-repository från nätverksshare till persistent `/data/git/repo`.
+- Exporterar komplett Git-historik som `git/esphome-config.bundle` på backupdestinationen.
+- Verifierar bundlen både före och efter kopiering till nätverkslagringen.
+- Skapar `git/git-status.json` med HEAD, commit count, storlek och verifieringsstatus.
+- Git bundle innehåller alla refs och HEAD så den kan återställas med vanlig `git clone`.
+- Lämnar eventuell gammal `git/repo` från 0.2.2 orörd för säker migration.
+
 ## 0.2.2
 - Ny destinationslayout med separat config, bundles, Git och manifest.
 - Writable temp-workspace för ESPHome bundle.
