@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>ESPHome Backup</title>
+<style>
+:root{--bg:#f5f7fa;--card:#fff;--text:#18212f;--muted:#64748b;--line:#dde5ed;--accent:#03a9f4;--good:#16a34a;--warn:#d97706;--bad:#dc2626;--soft:#eef3f7;--shadow:0 8px 24px rgba(15,23,42,.06)}
+@media(prefers-color-scheme:dark){:root{--bg:#111821;--card:#1b2531;--text:#e7edf5;--muted:#9aaabd;--line:#334155;--soft:#202c39;--shadow:0 10px 26px rgba(0,0,0,.22)}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}.shell{max-width:1180px;margin:auto;padding:22px}.top{display:flex;align-items:center;gap:14px;margin-bottom:18px}.logo{width:48px;height:48px;flex:0 0 auto;border-radius:14px;background:linear-gradient(145deg,#03a9f4,#0877c9);display:grid;place-items:center;color:#fff;box-shadow:var(--shadow)}.logo svg{width:29px;height:29px}.title h1{font-size:24px;margin:0}.title p{margin:2px 0 0;color:var(--muted)}.actions{margin-left:auto;display:flex;gap:9px}.btn{border:0;border-radius:10px;padding:10px 15px;font:inherit;font-weight:700;cursor:pointer;background:var(--accent);color:#fff}.btn:disabled{opacity:.5;cursor:not-allowed}.btn.secondary{background:var(--card);color:var(--text);border:1px solid var(--line)}.hero,.card{background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow)}.hero{border-radius:16px;padding:19px;display:grid;grid-template-columns:1.25fr 1fr;gap:20px;margin-bottom:14px}.statusrow{display:flex;align-items:center;gap:13px}.dot{width:13px;height:13px;border-radius:50%;background:var(--muted);box-shadow:0 0 0 5px color-mix(in srgb,var(--muted) 14%,transparent)}.dot.ok{background:var(--good);box-shadow:0 0 0 5px color-mix(in srgb,var(--good) 14%,transparent)}.dot.warn{background:var(--warn);box-shadow:0 0 0 5px color-mix(in srgb,var(--warn) 14%,transparent)}.dot.error{background:var(--bad);box-shadow:0 0 0 5px color-mix(in srgb,var(--bad) 14%,transparent)}.dot.running{background:var(--accent);animation:pulse 1.1s infinite}@keyframes pulse{50%{opacity:.3}}.bigstatus{font-size:20px;font-weight:800}.sub{color:var(--muted);margin-top:3px}.hero-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px}.metric{border-radius:11px;padding:11px 13px;background:var(--soft)}.metric span{color:var(--muted);display:block}.metric b{display:block;margin-top:3px;font-size:15px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:13px;margin-bottom:14px}.card{border-radius:15px;padding:15px}.card h3{font-size:15px;margin:0 0 12px}.kpi{font-size:28px;line-height:1.1;font-weight:800;margin-bottom:4px}.muted{color:var(--muted)}.mono{font-family:ui-monospace,"SFMono-Regular",Consolas,monospace;font-size:12px;overflow-wrap:anywhere}.two{display:grid;grid-template-columns:1.25fr .75fr;gap:13px}.row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}.row>span:first-child{color:var(--muted)}.chip{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:750;background:var(--soft)}.chip.ok{color:var(--good);background:color-mix(in srgb,var(--good) 11%,transparent)}.chip.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 11%,transparent)}.chip.error{color:var(--bad);background:color-mix(in srgb,var(--bad) 11%,transparent)}.warning{margin-top:13px;padding:10px 12px;border-radius:10px;color:var(--warn);background:color-mix(in srgb,var(--warn) 10%,transparent)}.archive{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}.archive:last-child{border:0}.empty{text-align:center;color:var(--muted);padding:16px}.footer{text-align:center;color:var(--muted);padding:19px 0 2px;font-size:12px}.toast{position:fixed;right:18px;bottom:18px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);padding:11px 14px;border-radius:10px;display:none;max-width:360px}.toast.show{display:block}
+@media(max-width:850px){.hero,.two{grid-template-columns:1fr}.grid{grid-template-columns:repeat(2,1fr)}.top{flex-wrap:wrap}.actions{margin-left:0}.hero-meta{grid-template-columns:1fr 1fr}}
+@media(max-width:520px){.shell{padding:14px}.title h1{font-size:20px}.actions{width:100%}.btn{flex:1}.hero-meta{grid-template-columns:1fr}.grid{grid-template-columns:1fr 1fr}.kpi{font-size:24px}}
+</style>
+</head>
+<body>
+<main class="shell">
+  <header class="top">
+    <div class="logo"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a4 4 0 0 1 4 4v1h1a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-7a3 3 0 0 1 3-3h1V6a4 4 0 0 1 4-4Zm0 2a2 2 0 0 0-2 2v1h4V6a2 2 0 0 0-2-2ZM7 9a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-7a1 1 0 0 0-1-1H7Zm2 2h6v2H9v-2Zm0 4h4v2H9v-2Z"/></svg></div>
+    <div class="title"><h1>ESPHome Backup</h1><p>Verifierad backup, bundles och versionshistorik</p></div>
+    <div class="actions"><button class="btn secondary" onclick="refreshStatus()">Uppdatera</button><button id="backupBtn" class="btn" onclick="runBackup()">Backup now</button></div>
+  </header>
+
+  <section class="hero">
+    <div>
+      <div class="statusrow"><span id="statusDot" class="dot"></span><div><div id="statusText" class="bigstatus">Läser status…</div><div id="statusMessage" class="sub">Kontaktar backupmotorn</div></div></div>
+      <div id="warnings"></div>
+    </div>
+    <div class="hero-meta">
+      <div class="metric"><span>Senaste körning</span><b id="lastRun">–</b></div>
+      <div class="metric"><span>Nästa körning</span><b id="nextRun">–</b></div>
+      <div class="metric"><span>Destination</span><b id="destination" class="mono">–</b></div>
+      <div class="metric"><span>Schema</span><b id="schedule">–</b></div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card"><h3>ESPHome-enheter</h3><div id="devices" class="kpi">–</div><div class="muted">konfigurationer</div></div>
+    <div class="card"><h3>Verifierade filer</h3><div id="files" class="kpi">–</div><div id="bytes" class="muted">–</div></div>
+    <div class="card"><h3>Bundles</h3><div id="bundles" class="kpi">–</div><div id="bundleState" class="muted">–</div></div>
+    <div class="card"><h3>Git-historik</h3><div id="commits" class="kpi">–</div><div id="gitHead" class="muted mono">–</div></div>
+  </section>
+
+  <section class="two">
+    <div class="card"><h3>Backup-komponenter</h3><div id="components"></div></div>
+    <div class="card"><h3>Policy & retention</h3><div id="policy"></div></div>
+  </section>
+
+  <section class="two" style="margin-top:13px">
+    <div class="card"><h3>Senaste arkiv</h3><div id="archives"></div></div>
+    <div class="card"><h3>Git bundle</h3><div id="gitDetail"></div></div>
+  </section>
+
+  <div class="footer">ESPHome Backup v0.3.0 · GUI via Home Assistant Ingress</div>
+</main>
+<div id="toast" class="toast"></div>
+<script>
+const $=id=>document.getElementById(id);
+const size=n=>{if(n==null)return'–';let x=Number(n),u=['B','KB','MB','GB'],i=0;while(x>=1024&&i<u.length-1){x/=1024;i++}return`${x.toFixed(i?1:0)} ${u[i]}`};
+const when=v=>{if(!v)return'–';try{return new Date(v).toLocaleString([], {dateStyle:'short',timeStyle:'short'})}catch{return v}};
+const chip=s=>{let c=s==='ok'?'ok':s==='warning'?'warn':s==='error'?'error':'';return`<span class="chip ${c}">${s||'–'}</span>`};
+function toast(text){let t=$('toast');t.textContent=text;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3500)}
+function api(path){return path.replace(/^\//,'')}
+async function refreshStatus(){try{let r=await fetch(api('api/status'),{cache:'no-store'});if(!r.ok)throw new Error(`HTTP ${r.status}`);render(await r.json())}catch(e){$('statusText').textContent='Status kunde inte läsas';$('statusMessage').textContent=String(e);$('statusDot').className='dot error'}}
+function render(d){const m=d.manifest||{}, c=m.components||{}, o=d.options||{}, g=d.git_status||c.git?.result||{};const st=d.running?'running':(d.status||'starting');$('statusDot').className='dot '+(st==='ok'?'ok':st==='ok_with_warnings'?'warn':st==='error'?'error':st==='running'?'running':'');$('statusText').textContent=d.running?'Backup pågår':st==='ok'?'Allt fungerar':st==='ok_with_warnings'?'Backup klar med varningar':st==='error'?'Backup misslyckades':'Startar…';$('statusMessage').textContent=d.message||'';$('backupBtn').disabled=!!d.running;$('backupBtn').textContent=d.running?'Backup pågår…':'Backup now';$('lastRun').textContent=when(d.last_run||d.last_success);$('nextRun').textContent=when(d.next_run);$('destination').textContent=o.destination||'–';$('schedule').textContent=o.schedule||'–';$('devices').textContent=m.yaml_count??d.devices??'–';$('files').textContent=c.files?.verified_files??d.verified_files??'–';$('bytes').textContent=size(c.files?.verified_bytes??d.verified_bytes);$('bundles').textContent=c.bundles?.created??d.bundles_created??'–';$('bundleState').innerHTML=chip(c.bundles?.status||(o.create_bundles?'–':'disabled'));$('commits').textContent=g.commits??'–';$('gitHead').textContent=g.short_commit?`HEAD ${g.short_commit}`:(o.git_enabled?'Inga commits ännu':'Avstängt');const warnings=d.warnings||[];$('warnings').innerHTML=warnings.length?`<div class="warning">${warnings.map(x=>'⚠ '+escapeHtml(x)).join('<br>')}</div>`:'';
+  const names=[['Filer','files'],['Bundles','bundles'],['Git','git'],['Arkiv','archive']];$('components').innerHTML=names.map(([n,k])=>`<div class="row"><span>${n}</span>${chip(c[k]?.status||(k==='git'&&!o.git_enabled?'disabled':k==='archive'&&!o.create_archive?'disabled':'–'))}</div>`).join('');$('policy').innerHTML=`<div class="row"><span>Secrets</span><b>${o.include_secrets?'Inkluderas':'Exkluderas'}</b></div><div class="row"><span>Git</span><b>${o.git_enabled?'Aktiv':'Av'}</b></div><div class="row"><span>Arkiv</span><b>${o.create_archive?'Aktiv':'Av'}</b></div><div class="row"><span>Retention</span><b>${o.keep_daily??'–'}D / ${o.keep_weekly??'–'}W / ${o.keep_monthly??'–'}M</b></div>`;
+  const a=d.archives||[];$('archives').innerHTML=a.length?a.map(x=>`<div class="archive"><span class="mono">${escapeHtml(x.name)}</span><span class="muted">${size(x.size)}</span></div>`).join(''):'<div class="empty">Inga arkiv ännu</div>';$('gitDetail').innerHTML=o.git_enabled?`<div class="row"><span>Status</span>${chip(g.status||c.git?.status)}</div><div class="row"><span>Commits</span><b>${g.commits??'–'}</b></div><div class="row"><span>HEAD</span><b class="mono">${escapeHtml(g.short_commit||'–')}</b></div><div class="row"><span>Bundle</span><b>${g.bundle_verified?'Verifierad':'–'}</b></div><div class="row"><span>Storlek</span><b>${size(g.bundle_size)}</b></div>`:'<div class="empty">Git-versionering är avstängd</div>';
+}
+function escapeHtml(v){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+async function runBackup(){if(!confirm('Starta en manuell ESPHome-backup nu?'))return;$('backupBtn').disabled=true;try{let r=await fetch(api('api/backup'),{method:'POST'});let d=await r.json();if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);toast('Backup startad');setTimeout(refreshStatus,300)}catch(e){toast(String(e));refreshStatus()}}
+refreshStatus();setInterval(refreshStatus,2000);
+</script>
+</body></html>

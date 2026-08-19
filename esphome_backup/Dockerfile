@@ -20,6 +20,8 @@ RUN apk add --no-cache \
     && /opt/venv/bin/pip install --no-cache-dir requests esphome
 
 COPY app.py /app.py
+COPY web_ui.py /web_ui.py
+COPY ui.html /ui.html
 COPY run.sh /run.sh
 RUN chmod 0755 /run.sh
 

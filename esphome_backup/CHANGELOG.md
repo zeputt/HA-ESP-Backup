@@ -1,35 +1,33 @@
 # Changelog
 
+## 0.3.0
+
+- Nytt Home Assistant Ingress GUI.
+- Dashboard för backupstatus, schema, destination, filer, bundles, Git och arkiv.
+- Ny **Backup now**-funktion.
+- Manuell backup körs asynkront och GUI:t följer status live.
+- Låsning hindrar samtidiga manuella/schemalagda backupjobb.
+- Runtime-status sparas persistent under `/data`.
+- Senaste manifest, Git-status och arkiv presenteras i GUI:t.
+- Ingress-webbservern accepterar endast trafik från Home Assistant Supervisors Ingress-proxy.
+- Inga webbportar exponeras på värden.
+
 ## 0.2.3
-- Flyttar aktivt Git-repository från nätverksshare till persistent `/data/git/repo`.
-- Exporterar komplett Git-historik som `git/esphome-config.bundle` på backupdestinationen.
-- Verifierar bundlen både före och efter kopiering till nätverkslagringen.
-- Skapar `git/git-status.json` med HEAD, commit count, storlek och verifieringsstatus.
-- Git bundle innehåller alla refs och HEAD så den kan återställas med vanlig `git clone`.
-- Lämnar eventuell gammal `git/repo` från 0.2.2 orörd för säker migration.
+
+- Aktivt Git-repository flyttat till persistenta `/data/git/repo`.
+- Portabel Git bundle exporteras till backupdestinationen.
+- Git bundle verifieras efter kopiering till destinationen.
+- `git-status.json` med commit, historiklängd och bundle-status.
 
 ## 0.2.2
-- Ny destinationslayout med separat config, bundles, Git och manifest.
-- Writable temp-workspace för ESPHome bundle.
-- Robust Git-init i separat repo.
-- Komponentfel degraderas till `ok_with_warnings` efter verifierad kärnbackup.
-- Manifest med komponentstatus.
 
+- Ny destinationsstruktur med separat `latest/config`, `bundles`, `git`, `archive` och manifest.
+- Bundle-byggning i skrivbar temporär workspace.
+- Valfria komponentfel fäller inte en verifierad kärnbackup.
 
 ## 0.2.1
-- Gör rsync kompatiblare med SMB/NFS/NAS genom att inte försöka bevara Unix owner/group/permissions eller katalogtider.
-- Loggar full rsync-output och kommando vid fel, inklusive exit-kod.
-- Verifierar efter synk att alla relevanta filer finns på destinationen och har identiskt SHA-256-innehåll.
-- Backup markeras inte som lyckad om verifieringen misslyckas.
-- Fixar scheduler-visningen så att 03:30 rapporteras som 03:30 i stället för 03:29.
-- Statussensorn får verified_files och verified_bytes.
 
-## 0.2.0
-- Paketerad som Git-ready Home Assistant app repository.
-- Repository-metadata korrigerad för lokal/publicerad repository-användning.
-- Dokumentation för lokal installation och repository-installation.
-- Behåller lokal build utan `image:` så Home Assistant bygger appen själv.
-- Versionssträng uppdaterad.
-
-## 0.1.0
-- Första versionen.
+- NAS/SMB-vänlig rsync.
+- SHA-256-verifiering.
+- Förbättrad felloggning.
+- Scheduler korrigerad till exakt konfigurerad minut.

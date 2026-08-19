@@ -1,17 +1,19 @@
 # ESPHome Backup
 
-Home Assistant App för automatisk backup av ESPHome-konfigurationer från `/config/esphome`.
+Automatisk och verifierad backup av Home Assistants ESPHome-konfigurationer till `/share`, `/media` eller `/backup`.
 
-Funktioner:
-- verifierad spegel under `latest/config`
-- SHA-256-verifiering efter synk
-- ESPHome bundles byggda i skrivbar temporär workspace
-- komprimerade `.tar.zst`-arkiv med daily/weekly/monthly retention
-- persistent lokalt Git-repository under `/data/git/repo`
+Version 0.3.0 introducerar ett Ingress-baserat webbgränssnitt i Home Assistant med statusöversikt och manuell **Backup now**.
+
+## Funktioner
+
+- NAS/SMB-vänlig rsync av `/config/esphome`
+- SHA-256-verifiering av varje kopierad fil
+- ESPHome bundles i skrivbar temporär workspace
+- zstd-komprimerade arkiv och retention
+- lokal Git-historik under appens persistenta `/data`
 - verifierad portabel Git bundle på backupdestinationen
-- komponentbaserad status: `ok`, `ok_with_warnings` eller `error`
-- status till Home Assistant via Core API
-- destination under `/share`, `/media` eller `/backup`
+- Home Assistant-statussensorer
+- Ingress GUI, utan exponerad webbport
+- manuell backup med överlappningsskydd
 
-## 0.2.3
-Git arbetar nu endast mot appens persistenta lokala `/data`. Efter varje körning exporteras hela Git-historiken som `git/esphome-config.bundle` till Synology/NAS och verifieras därifrån. Det eliminerar beroendet av fungerande `.git`-metadata på SMB/NFS.
+Se `DOCS.md` för installation och konfiguration.

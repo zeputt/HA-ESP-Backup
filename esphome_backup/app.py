@@ -8,12 +8,15 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import threading
 import tarfile
 import tempfile
 import time
 from typing import Any
 
 import requests
+
+from web_ui import start_web_server
 
 LOG = logging.getLogger("esphome-backup")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -22,6 +25,93 @@ OPTIONS = Path("/data/options.json")
 SOURCE = Path("/ha_config/esphome")
 SUPERVISOR = "http://supervisor/core/api"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
+STATE_FILE = Path("/data/runtime-status.json")
+BACKUP_LOCK = threading.Lock()
+STATE_LOCK = threading.Lock()
+RUNTIME_STATE: dict[str, Any] = {
+    "status": "starting",
+    "version": "0.3.0",
+    "running": False,
+    "trigger": None,
+    "last_run": None,
+    "last_success": None,
+    "last_failure": None,
+    "next_run": None,
+    "message": "ESPHome Backup startar",
+    "warnings": [],
+}
+
+
+def save_runtime_state(**updates: Any) -> dict[str, Any]:
+    with STATE_LOCK:
+        RUNTIME_STATE.update(updates)
+        snapshot = dict(RUNTIME_STATE)
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(snapshot, indent=2, default=str), encoding="utf-8")
+        os.replace(tmp, STATE_FILE)
+    except Exception as exc:
+        LOG.debug("Kunde inte skriva runtime-status: %s", exc)
+    return snapshot
+
+
+def load_runtime_state() -> None:
+    if not STATE_FILE.is_file():
+        return
+    try:
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            with STATE_LOCK:
+                RUNTIME_STATE.update(data)
+                RUNTIME_STATE["version"] = "0.3.0"
+                RUNTIME_STATE["running"] = False
+                if RUNTIME_STATE.get("status") == "running":
+                    RUNTIME_STATE["status"] = "starting"
+    except Exception as exc:
+        LOG.debug("Kunde inte läsa runtime-status: %s", exc)
+
+
+def runtime_snapshot() -> dict[str, Any]:
+    with STATE_LOCK:
+        state = dict(RUNTIME_STATE)
+    try:
+        opts = load_options()
+    except Exception:
+        opts = {}
+    state["options"] = {
+        "destination": opts.get("destination"),
+        "schedule": opts.get("schedule"),
+        "create_archive": opts.get("create_archive"),
+        "create_bundles": opts.get("create_bundles"),
+        "include_secrets": opts.get("include_secrets"),
+        "git_enabled": opts.get("git_enabled"),
+        "git_push": opts.get("git_push"),
+        "keep_daily": opts.get("keep_daily"),
+        "keep_weekly": opts.get("keep_weekly"),
+        "keep_monthly": opts.get("keep_monthly"),
+    }
+    destination = opts.get("destination")
+    if destination:
+        dest = Path(destination)
+        for name, path in (("manifest", dest / "manifest.json"), ("git_status", dest / "git" / "git-status.json")):
+            try:
+                state[name] = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+            except Exception:
+                state[name] = None
+        try:
+            archives = sorted((dest / "archive").glob("esphome-*.tar.zst"), key=lambda x: x.stat().st_mtime, reverse=True)
+            state["archives"] = [
+                {
+                    "name": a.name,
+                    "size": a.stat().st_size,
+                    "modified": dt.datetime.fromtimestamp(a.stat().st_mtime).astimezone().isoformat(timespec="seconds"),
+                }
+                for a in archives[:8]
+            ]
+        except Exception:
+            state["archives"] = []
+    return state
 
 
 def load_options() -> dict[str, Any]:
@@ -385,7 +475,7 @@ def git_commit(config_source: Path, git_repo: Path, destination_git: Path, opts:
         **bundle_status,
     }
 
-def backup_once(opts: dict[str, Any]) -> None:
+def backup_once(opts: dict[str, Any]) -> dict[str, Any]:
     started = dt.datetime.now().astimezone()
     publish_status("running", started=started.isoformat())
 
@@ -504,6 +594,64 @@ def backup_once(opts: dict[str, Any]) -> None:
             device_count, verified_files, destination, duration
         )
 
+    return {
+        "overall": overall,
+        "warnings": warnings,
+        "devices": device_count,
+        "verified_files": verified_files,
+        "verified_bytes": verified_bytes,
+        "bundles_created": bundles_ok,
+        "bundle_failures": bundle_failures,
+        "duration_seconds": round(duration, 2),
+        "destination": str(destination),
+    }
+
+def _run_backup_locked(trigger: str) -> bool:
+    started = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    save_runtime_state(
+        status="running", running=True, trigger=trigger, last_run=started,
+        message=f"Backup startad ({trigger})", warnings=[], error=None,
+    )
+    try:
+        result = backup_once(load_options())
+        overall = result.get("overall", "ok")
+        warnings = result.get("warnings", [])
+        save_runtime_state(
+            status=overall, running=False, trigger=trigger,
+            last_success=dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+            message="Backup klar och verifierad" if not warnings else "Backup verifierad med varningar",
+            **result,
+        )
+        return True
+    except Exception as exc:
+        LOG.exception("%s backup misslyckades", trigger.capitalize())
+        failure = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        save_runtime_state(
+            status="error", running=False, trigger=trigger, last_failure=failure,
+            message=str(exc), error=str(exc),
+        )
+        publish_status("error", error=str(exc), last_failure=failure)
+        return False
+    finally:
+        BACKUP_LOCK.release()
+
+
+def run_backup_safe(trigger: str) -> bool:
+    if not BACKUP_LOCK.acquire(blocking=False):
+        LOG.warning("Backup begärd (%s), men en körning pågår redan", trigger)
+        return False
+    return _run_backup_locked(trigger)
+
+
+def request_manual_backup() -> bool:
+    # Reserve the backup slot before returning HTTP 202, avoiding a race where
+    # two browser clicks could both be accepted before the worker grabs the lock.
+    if not BACKUP_LOCK.acquire(blocking=False):
+        return False
+    threading.Thread(target=_run_backup_locked, args=("manual",), daemon=True, name="manual-backup").start()
+    return True
+
+
 def next_scheduled_run(schedule: str, now: dt.datetime | None = None) -> dt.datetime:
     hour, minute = map(int, schedule.split(":"))
     now = now or dt.datetime.now().astimezone()
@@ -514,33 +662,27 @@ def next_scheduled_run(schedule: str, now: dt.datetime | None = None) -> dt.date
 
 
 def main() -> int:
+    load_runtime_state()
     opts = load_options()
-    LOG.info("ESPHome Backup 0.2.3 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
+    LOG.info("ESPHome Backup 0.3.0 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
+    start_web_server(runtime_snapshot, request_manual_backup, port=8099)
 
     if opts.get("run_on_start"):
-        try:
-            backup_once(opts)
-        except Exception as exc:
-            LOG.exception("Backup vid start misslyckades")
-            publish_status("error", error=str(exc), last_failure=dt.datetime.now().astimezone().isoformat())
+        run_backup_safe("startup")
 
     while True:
         opts = load_options()
         now = dt.datetime.now().astimezone()
         next_run = next_scheduled_run(opts["schedule"], now)
         wait = max(1.0, (next_run - now).total_seconds())
+        save_runtime_state(next_run=next_run.isoformat(timespec="seconds"))
         ha_state("sensor.esphome_backup_next_run", next_run.isoformat(), {
             "friendly_name": "ESPHome Backup Next Run",
             "device_class": "timestamp",
         })
         LOG.info("Nästa backup: %s", next_run.isoformat(timespec="minutes"))
         time.sleep(wait)
-        opts = load_options()
-        try:
-            backup_once(opts)
-        except Exception as exc:
-            LOG.exception("Schemalagd backup misslyckades")
-            publish_status("error", error=str(exc), last_failure=dt.datetime.now().astimezone().isoformat())
+        run_backup_safe("scheduled")
 
 
 if __name__ == "__main__":

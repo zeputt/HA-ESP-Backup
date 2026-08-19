@@ -1,53 +1,60 @@
-# ESPHome Backup 0.2.3
+# ESPHome Backup 0.3.0
 
-## Källa
-Appen läser `/config/esphome` via `/ha_config/esphome` read-only. Originalkonfigurationen skrivs aldrig till.
+ESPHome Backup säkerhetskopierar `/config/esphome` från Home Assistant till en skrivbar Home Assistant-lagringsmount.
+
+## Webbgränssnitt
+
+Version 0.3.0 har ett Ingress-gränssnitt. Efter uppdatering och start visas **OPEN WEB UI** på appens infosida och ESPHome Backup kan även visas som en Home Assistant-panel.
+
+GUI:t visar:
+
+- övergripande backupstatus
+- senaste och nästa körning
+- destination och schema
+- antal ESPHome-konfigurationer
+- verifierade filer och datamängd
+- bundle-status
+- Git commits, HEAD och bundle-verifiering
+- status för filer, bundles, Git och arkiv var för sig
+- retentionpolicy
+- senaste arkiven
+- varningar från senaste körningen
+- **Backup now** för en manuell backup
+
+Manuell och schemalagd backup kan inte köras samtidigt.
 
 ## Destination
-`destination` måste ligga under `/share`, `/media` eller `/backup`. För en Synology-share rekommenderas `/share/<mountnamn>/esphome-backup`.
 
-## Struktur på backupdestinationen
+Exempel för en Synology-share monterad i Home Assistant som `HA_ESP_Backup`:
+
+```yaml
+destination: /share/HA_ESP_Backup/esphome-backup
+```
+
+Destinationen måste ligga under `/share`, `/media` eller `/backup`.
+
+## Struktur
 
 ```text
-<destination>/
+esphome-backup/
 ├── latest/
-│   ├── config/                 # verifierad spegel av /config/esphome
-│   └── bundles/                # valfria ESPHome bundles
-├── archive/                    # versionerade .tar.zst
+│   ├── config/
+│   └── bundles/
+├── archive/
 ├── git/
-│   ├── esphome-config.bundle   # komplett portabel Git-historik
-│   └── git-status.json         # commit, antal commits och verifieringsstatus
-└── manifest.json               # status per komponent
+│   ├── esphome-config.bundle
+│   └── git-status.json
+└── manifest.json
 ```
 
-Det aktiva Git-repot ligger **inte** på nätverkslagringen. Det ligger persistent i appens privata lagring:
+`latest/config` är en ren spegel av ESPHome-katalogen. Git-motorn ligger lokalt i appens persistenta `/data/git/repo`; endast den portabla och verifierade Git-bundlen skrivs till nätverkslagringen.
 
-```text
-/data/git/repo/
-└── .git/
-```
-
-Efter varje backup skapas och verifieras `esphome-config.bundle`, som sedan kopieras atomärt till backupdestinationen. Detta undviker Git-metadata på SMB/NFS samtidigt som hela versionshistoriken finns off-host på Synologyn.
-
-## Återställ Git-historik
+## Git restore
 
 ```bash
 git clone esphome-config.bundle esphome-restored
 ```
 
-Bundlen innehåller HEAD och alla refs så en normal `git clone` checkar ut aktuell branch direkt.
-
-## v0.2.3
-- Aktivt Git-repository flyttat till persistent `/data/git/repo`.
-- Nätverkslagringen innehåller inte längre ett aktivt `.git`-repo.
-- Efter varje Git-commit skapas en komplett `esphome-config.bundle`.
-- Bundlen verifieras lokalt och därefter igen från den faktiska backupdestinationen.
-- `git-status.json` innehåller branch, HEAD, commit count, bundle size och verifieringsstatus.
-- Git bundle skapas med alla refs/HEAD och kan klonas direkt.
-- Git-fel fortsätter att degradera resultatet till `ok_with_warnings`; verifierad kärnbackup påverkas inte.
-
 ## Säkerhet
-Om `include_secrets: true` används kommer `secrets.yaml` att versionshanteras i det lokala Git-repot och finnas i Git-bundlen. Aktivera inte `git_push` till ett externt repo utan att du avsiktligt accepterar detta.
 
-## Uppgradering från 0.2.2
-En eventuell gammal `<destination>/git/repo` från 0.2.2 används inte längre. Den kan tas bort manuellt efter att 0.2.3 har genomfört en lyckad körning och `git/esphome-config.bundle` har verifierats.
+Home Assistant-konfigurationen är monterad read-only. GUI:t använder Home Assistant Ingress och accepterar endast trafik från Supervisors Ingress-proxy. Ingen separat webbport publiceras på Home Assistant-värden.
