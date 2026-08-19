@@ -1,6 +1,7 @@
 # Putte Home Assistant Apps
 
-Repository för Home Assistant Apps.
+Home Assistant App Repository.
 
-## ESPHome Backup 0.2.3
-Automatisk, verifierad backup av ESPHome YAML, bundles, arkiv och Git-historik. Aktiv Git-data lagras persistent i appens `/data`; en verifierad `esphome-config.bundle` exporteras till backupdestinationen.
+## ESPHome Backup 0.3.0
+
+Automatisk och verifierad backup av ESPHome-konfigurationer med bundles, retention, Git-historik och ett Ingress-baserat GUI med **Backup now**.
