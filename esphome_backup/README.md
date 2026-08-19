@@ -3,14 +3,14 @@
 Home Assistant App för automatisk backup av ESPHome-konfigurationer från `/config/esphome`.
 
 Funktioner:
-- speglar aktuell ESPHome-konfiguration till vald backupdestination
-- komprimerade `.tar.zst`-arkiv
-- daily/weekly/monthly-retention
-- valfri lokal Git-historik
-- valfria `esphome bundle`-paket
+- verifierad spegel under `latest/config`
+- SHA-256-verifiering efter synk
+- valfria ESPHome bundles byggda i skrivbar temporär workspace
+- komprimerade `.tar.zst`-arkiv med daily/weekly/monthly retention
+- separat lokalt Git-repository under `git/repo`
+- komponentbaserad status: `ok`, `ok_with_warnings` eller `error`
 - status till Home Assistant via Core API
-- stöd för destination under `/share`, `/media` eller `/backup`
+- destination under `/share`, `/media` eller `/backup`
 
-
-## v0.2.1
-NAS-vänligare rsync, destinationsverifiering och korrigerad schemaläggning.
+## 0.2.2
+Denna version separerar kärnbackup från Git, bundles och arkiv. En verifierad filbackup förblir lyckad även om en valfri extrafunktion misslyckas.

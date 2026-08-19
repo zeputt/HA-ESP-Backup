@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.2
+- Ny destinationslayout med separat config, bundles, Git och manifest.
+- Writable temp-workspace för ESPHome bundle.
+- Robust Git-init i separat repo.
+- Komponentfel degraderas till `ok_with_warnings` efter verifierad kärnbackup.
+- Manifest med komponentstatus.
+
+
 ## 0.2.1
 - Gör rsync kompatiblare med SMB/NFS/NAS genom att inte försöka bevara Unix owner/group/permissions eller katalogtider.
 - Loggar full rsync-output och kommando vid fel, inklusive exit-kod.

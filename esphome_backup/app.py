@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 from typing import Any
 
@@ -168,38 +169,58 @@ def verify_latest(source: Path, latest: Path, include_secrets: bool) -> tuple[in
     LOG.info("Verifiering OK: %s filer, %s byte", len(expected), verified_bytes)
     return len(expected), verified_bytes
 
-def make_bundles(source: Path, bundle_dir: Path, yamls: list[Path]) -> tuple[int, list[str]]:
+def prepare_bundle_workspace(source: Path, include_secrets: bool) -> Path:
+    """Create a writable temporary copy of ESPHome config for bundle generation."""
+    work_root = Path(tempfile.mkdtemp(prefix="esphome-backup-bundle-"))
+    work = work_root / "esphome"
+    excludes = ["--exclude=.esphome/", "--exclude=.git/", "--exclude=*.bin", "--exclude=*.elf"]
+    if not include_secrets:
+        excludes += ["--exclude=secrets.yaml", "--exclude=secrets.yml"]
+    run([
+        "rsync", "-rt", "--no-perms", "--no-owner", "--no-group", "--omit-dir-times",
+        *excludes, f"{source}/", f"{work}/",
+    ])
+    return work
+
+
+def make_bundles(source: Path, bundle_dir: Path, yamls: list[Path], include_secrets: bool) -> tuple[int, list[str]]:
     bundle_dir.mkdir(parents=True, exist_ok=True)
     ok = 0
     failures: list[str] = []
-    for yaml in yamls:
-        if yaml.name.startswith("secrets."):
-            continue
-        output = bundle_dir / f"{yaml.stem}.esphomebundle.tar.gz"
-        try:
-            cp = run(["/opt/venv/bin/esphome", "bundle", str(yaml), "-o", str(output)], cwd=source)
-            ok += 1
-            if cp.stdout.strip():
-                LOG.info("Bundle %s: %s", yaml.name, cp.stdout.strip().splitlines()[-1])
-        except subprocess.CalledProcessError as exc:
-            failures.append(yaml.name)
-            LOG.warning("Bundle misslyckades för %s: %s", yaml.name, exc.stdout.strip())
+    work: Path | None = None
+    try:
+        work = prepare_bundle_workspace(source, include_secrets)
+        for yaml in yamls:
+            if yaml.name.startswith("secrets."):
+                continue
+            rel = yaml.relative_to(source)
+            work_yaml = work / rel
+            output = bundle_dir / f"{yaml.stem}.esphomebundle.tar.gz"
+            try:
+                cp = run(["/opt/venv/bin/esphome", "bundle", str(work_yaml), "-o", str(output)], cwd=work)
+                ok += 1
+                if cp.stdout.strip():
+                    LOG.info("Bundle %s: %s", yaml.name, cp.stdout.strip().splitlines()[-1])
+            except subprocess.CalledProcessError as exc:
+                failures.append(yaml.name)
+                tail = (exc.stdout or "").strip().splitlines()[-12:]
+                LOG.warning("Bundle misslyckades för %s:\n%s", yaml.name, "\n".join(tail))
+    finally:
+        if work is not None:
+            shutil.rmtree(work.parent, ignore_errors=True)
     return ok, failures
 
-
-def create_manifest(dest: Path, yamls: list[Path], bundles_ok: int, bundle_failures: list[str]) -> Path:
+def create_manifest(dest: Path, yamls: list[Path], components: dict[str, Any]) -> Path:
     manifest = {
         "created": dt.datetime.now(dt.timezone.utc).isoformat(),
         "source": "/config/esphome",
         "yaml_count": len([p for p in yamls if not p.name.startswith("secrets.")]),
         "files": [{"name": p.name, "sha256": sha256(p), "size": p.stat().st_size} for p in yamls],
-        "bundles_created": bundles_ok,
-        "bundle_failures": bundle_failures,
+        "components": components,
     }
     path = dest / "manifest.json"
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return path
-
 
 def make_archive(latest: Path, archives: Path) -> Path:
     archives.mkdir(parents=True, exist_ok=True)
@@ -258,30 +279,40 @@ def prune_archives(archives: Path, keep_daily: int, keep_weekly: int, keep_month
     return removed
 
 
-def git_commit(latest: Path, opts: dict[str, Any]) -> str:
-    git_dir = latest / ".git"
-    if not git_dir.exists():
-        run(["git", "init", "-b", opts["git_branch"]], cwd=latest)
-    run(["git", "config", "user.name", opts["git_user_name"]], cwd=latest)
-    run(["git", "config", "user.email", opts["git_user_email"]], cwd=latest)
-    run(["git", "add", "-A"], cwd=latest)
-    status = run(["git", "status", "--porcelain"], cwd=latest).stdout.strip()
-    if not status:
-        return "unchanged"
-    stamp = dt.datetime.now().astimezone().isoformat(timespec="seconds")
-    run(["git", "commit", "-m", f"ESPHome backup {stamp}"], cwd=latest)
+def git_commit(config_source: Path, git_repo: Path, opts: dict[str, Any]) -> str:
+    """Mirror verified config into a dedicated Git repository and commit changes."""
+    git_repo.mkdir(parents=True, exist_ok=True)
+    git_dir = git_repo / ".git"
+    if not git_dir.is_dir():
+        run(["git", "init", "-b", opts["git_branch"]], cwd=git_repo)
+
+    run(["git", "config", "user.name", opts["git_user_name"]], cwd=git_repo)
+    run(["git", "config", "user.email", opts["git_user_email"]], cwd=git_repo)
+
+    # Keep .git outside rsync deletion semantics while mirroring current config.
+    run([
+        "rsync", "-rt", "--delete", "--no-perms", "--no-owner", "--no-group",
+        "--omit-dir-times", "--exclude=.git/", f"{config_source}/", f"{git_repo}/",
+    ])
+    run(["git", "add", "-A"], cwd=git_repo)
+    status = run(["git", "status", "--porcelain"], cwd=git_repo).stdout.strip()
+    result = "unchanged"
+    if status:
+        stamp = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        run(["git", "commit", "-m", f"ESPHome backup {stamp}"], cwd=git_repo)
+        result = "committed"
 
     remote = str(opts.get("git_remote", "")).strip()
     if remote:
-        existing = run(["git", "remote"], cwd=latest).stdout.split()
+        existing = run(["git", "remote"], cwd=git_repo).stdout.split()
         if "origin" in existing:
-            run(["git", "remote", "set-url", "origin", remote], cwd=latest)
+            run(["git", "remote", "set-url", "origin", remote], cwd=git_repo)
         else:
-            run(["git", "remote", "add", "origin", remote], cwd=latest)
+            run(["git", "remote", "add", "origin", remote], cwd=git_repo)
         if opts.get("git_push"):
-            run(["git", "push", "-u", "origin", opts["git_branch"]], cwd=latest)
-    return "committed"
-
+            run(["git", "push", "-u", "origin", opts["git_branch"]], cwd=git_repo)
+            result += "+pushed"
+    return result
 
 def backup_once(opts: dict[str, Any]) -> None:
     started = dt.datetime.now().astimezone()
@@ -297,37 +328,70 @@ def backup_once(opts: dict[str, Any]) -> None:
         raise RuntimeError("destination måste ligga under /share, /media eller /backup")
 
     latest = destination / "latest"
-    archives = destination / "archive"
+    latest_config = latest / "config"
     bundles = latest / "bundles"
+    archives = destination / "archive"
+    git_repo = destination / "git" / "repo"
     destination.mkdir(parents=True, exist_ok=True)
 
     yamls = collect_yaml(SOURCE, opts["include_secrets"])
     if not yamls:
         raise RuntimeError("Inga ESPHome YAML-filer hittades")
 
-    sync_latest(SOURCE, latest, opts["include_secrets"])
-    verified_files, verified_bytes = verify_latest(SOURCE, latest, opts["include_secrets"])
+    # Core backup. Any failure here is fatal.
+    sync_latest(SOURCE, latest_config, opts["include_secrets"])
+    verified_files, verified_bytes = verify_latest(SOURCE, latest_config, opts["include_secrets"])
+
+    warnings: list[str] = []
+    components: dict[str, Any] = {
+        "files": {"status": "ok", "verified_files": verified_files, "verified_bytes": verified_bytes},
+        "bundles": {"status": "disabled", "created": 0, "failures": []},
+        "git": {"status": "disabled", "result": "disabled"},
+        "archive": {"status": "disabled", "path": None, "pruned": 0},
+    }
 
     bundles_ok = 0
     bundle_failures: list[str] = []
     if opts.get("create_bundles"):
-        bundles_ok, bundle_failures = make_bundles(SOURCE, bundles, yamls)
-
-    create_manifest(latest, yamls, bundles_ok, bundle_failures)
+        try:
+            bundles_ok, bundle_failures = make_bundles(SOURCE, bundles, yamls, opts["include_secrets"])
+            bstatus = "ok" if not bundle_failures else "warning"
+            components["bundles"] = {"status": bstatus, "created": bundles_ok, "failures": bundle_failures}
+            if bundle_failures:
+                warnings.append(f"bundles misslyckades för {len(bundle_failures)} enhet(er)")
+        except Exception as exc:
+            LOG.exception("Bundle-steget misslyckades")
+            components["bundles"] = {"status": "error", "created": bundles_ok, "failures": bundle_failures, "error": str(exc)}
+            warnings.append(f"bundle-steget: {exc}")
 
     git_result = "disabled"
     if opts.get("git_enabled"):
-        git_result = git_commit(latest, opts)
+        try:
+            git_result = git_commit(latest_config, git_repo, opts)
+            components["git"] = {"status": "ok", "result": git_result, "repo": str(git_repo)}
+        except Exception as exc:
+            LOG.exception("Git-versionering misslyckades, men den verifierade filbackupen behålls")
+            components["git"] = {"status": "error", "result": "failed", "error": str(exc), "repo": str(git_repo)}
+            warnings.append(f"git: {exc}")
 
     archive_path = None
     removed = 0
     if opts.get("create_archive"):
-        archive_path = make_archive(latest, archives)
-        removed = prune_archives(archives, opts["keep_daily"], opts["keep_weekly"], opts["keep_monthly"])
+        try:
+            archive_path = make_archive(latest, archives)
+            removed = prune_archives(archives, opts["keep_daily"], opts["keep_weekly"], opts["keep_monthly"])
+            components["archive"] = {"status": "ok", "path": str(archive_path), "pruned": removed}
+        except Exception as exc:
+            LOG.exception("Arkivering misslyckades, men den verifierade filbackupen behålls")
+            components["archive"] = {"status": "error", "path": None, "pruned": removed, "error": str(exc)}
+            warnings.append(f"archive: {exc}")
+
+    manifest_path = create_manifest(destination, yamls, components)
 
     duration = (dt.datetime.now().astimezone() - started).total_seconds()
     device_count = len([p for p in yamls if not p.name.startswith("secrets.")])
     total_size = sum(p.stat().st_size for p in yamls)
+    overall = "ok" if not warnings else "ok_with_warnings"
 
     ha_state("sensor.esphome_backup_last_run", started.isoformat(), {
         "friendly_name": "ESPHome Backup Last Run",
@@ -342,25 +406,31 @@ def backup_once(opts: dict[str, Any]) -> None:
         "unit_of_measurement": "B",
         "device_class": "data_size",
     })
-    publish_status("ok",
+    publish_status(overall,
         last_run=started.isoformat(),
         destination=str(destination),
         devices=device_count,
         yaml_files=len(yamls),
-        bundles_created=bundles_ok,
-        bundle_failures=bundle_failures,
-        archive=str(archive_path) if archive_path else "disabled",
-        archives_pruned=removed,
-        git=git_result,
-        duration_seconds=round(duration, 2),
         verified_files=verified_files,
         verified_bytes=verified_bytes,
+        bundles_created=bundles_ok,
+        bundle_failures=bundle_failures,
+        git=git_result,
+        archive=str(archive_path) if archive_path else components["archive"]["status"],
+        manifest=str(manifest_path),
+        warnings=warnings,
+        duration_seconds=round(duration, 2),
     )
-    LOG.info(
-        "Backup klar och verifierad: %s enheter, %s filer, destination %s, %.1fs",
-        device_count, verified_files, destination, duration
-    )
-
+    if warnings:
+        LOG.warning(
+            "Backup verifierad med varningar: %s enheter, %s filer, destination %s, %.1fs. %s",
+            device_count, verified_files, destination, duration, "; ".join(warnings)
+        )
+    else:
+        LOG.info(
+            "Backup klar och verifierad: %s enheter, %s filer, destination %s, %.1fs",
+            device_count, verified_files, destination, duration
+        )
 
 def next_scheduled_run(schedule: str, now: dt.datetime | None = None) -> dt.datetime:
     hour, minute = map(int, schedule.split(":"))
@@ -373,7 +443,7 @@ def next_scheduled_run(schedule: str, now: dt.datetime | None = None) -> dt.date
 
 def main() -> int:
     opts = load_options()
-    LOG.info("ESPHome Backup 0.2.1 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
+    LOG.info("ESPHome Backup 0.2.2 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
 
     if opts.get("run_on_start"):
         try:
