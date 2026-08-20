@@ -16,6 +16,7 @@ import time
 from typing import Any
 
 import requests
+import re
 
 from web_ui import start_web_server
 
@@ -179,6 +180,67 @@ def git_history_snapshot(limit: int = 40) -> dict[str, Any]:
         LOG.warning("Kunde inte läsa Git-historik: %s", exc)
         return {"enabled": True, "commits": [], "error": str(exc)}
 
+
+
+def git_commit_detail_snapshot(commit: str) -> dict[str, Any]:
+    """Return metadata, per-file numstat and a bounded patch for one Git commit."""
+    repo = Path("/data/git/repo")
+    if not (repo / ".git").is_dir():
+        return {"error": "Git-versionering är inte initierad", "status": 404}
+    if not re.fullmatch(r"[0-9a-fA-F]{7,40}", commit or ""):
+        return {"error": "Ogiltigt commit-id", "status": 400}
+    try:
+        resolved = run(["git", "rev-parse", "--verify", f"{commit}^{{commit}}"], cwd=repo).stdout.strip()
+    except Exception:
+        return {"error": "Commit hittades inte", "status": 404}
+    try:
+        meta = run([
+            "git", "show", "-s", "--date=iso-strict",
+            "--format=%H%x1f%h%x1f%aI%x1f%an%x1f%ae%x1f%s%x1f%b", resolved
+        ], cwd=repo).stdout.rstrip("\n")
+        parts = meta.split("\x1f", 6)
+        if len(parts) != 7:
+            raise RuntimeError("Kunde inte tolka commit metadata")
+        full, short, authored, author, email, subject, body = parts
+
+        numstat = run(["git", "show", "--numstat", "--format=", "--no-renames", resolved], cwd=repo, check=False).stdout
+        files = []
+        additions_total = 0
+        deletions_total = 0
+        for line in numstat.splitlines():
+            cols = line.split("\t", 2)
+            if len(cols) != 3:
+                continue
+            a, d, name = cols
+            binary = a == "-" or d == "-"
+            additions = None if binary else int(a)
+            deletions = None if binary else int(d)
+            if additions is not None: additions_total += additions
+            if deletions is not None: deletions_total += deletions
+            files.append({
+                "name": name, "additions": additions, "deletions": deletions, "binary": binary
+            })
+
+        patch = run([
+            "git", "show", "--format=", "--no-ext-diff", "--no-color",
+            "--find-renames", "--unified=3", resolved
+        ], cwd=repo, check=False).stdout
+        max_patch = 2_000_000
+        truncated = len(patch.encode("utf-8", errors="replace")) > max_patch
+        if truncated:
+            raw = patch.encode("utf-8", errors="replace")[:max_patch]
+            patch = raw.decode("utf-8", errors="ignore") + "\n\n... diff trunkerad efter 2 MB ...\n"
+
+        return {
+            "commit": full, "short_commit": short, "date": authored,
+            "author": author, "email": email, "message": subject, "body": body.strip(),
+            "files": files, "files_changed": len(files),
+            "additions": additions_total, "deletions": deletions_total,
+            "patch": patch, "patch_truncated": truncated,
+        }
+    except Exception as exc:
+        LOG.warning("Kunde inte läsa commit %s: %s", commit, exc)
+        return {"error": str(exc), "status": 500}
 
 def load_options() -> dict[str, Any]:
     with OPTIONS.open("r", encoding="utf-8") as f:
@@ -730,8 +792,8 @@ def next_scheduled_run(schedule: str, now: dt.datetime | None = None) -> dt.date
 def main() -> int:
     load_runtime_state()
     opts = load_options()
-    LOG.info("ESPHome Backup 0.3.1 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
-    start_web_server(runtime_snapshot, request_manual_backup, runtime_log_snapshot, git_history_snapshot, port=8099)
+    LOG.info("ESPHome Backup 0.3.2 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
+    start_web_server(runtime_snapshot, request_manual_backup, runtime_log_snapshot, git_history_snapshot, git_commit_detail_snapshot, port=8099)
 
     if opts.get("run_on_start"):
         run_backup_safe("startup")

@@ -4,7 +4,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 LOG = logging.getLogger("esphome-backup")
 UI_FILE = Path("/ui.html")
@@ -15,10 +15,11 @@ def start_web_server(
     manual_backup: Callable[[], bool],
     log_provider: Callable[[int, int], dict[str, Any]],
     git_history_provider: Callable[[int], dict[str, Any]],
+    git_commit_provider: Callable[[str], dict[str, Any]],
     port: int = 8099,
 ) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "ESPHomeBackup/0.3.1"
+        server_version = "ESPHomeBackup/0.3.2"
 
         def log_message(self, fmt: str, *args: Any) -> None:
             LOG.debug("Web: " + fmt, *args)
@@ -65,8 +66,15 @@ def start_web_server(
             if path == "/api/git-history" or path.endswith("/api/git-history"):
                 self.send_json(git_history_provider(40))
                 return
+            if path == "/api/git-commit" or path.endswith("/api/git-commit"):
+                params = parse_qs(urlparse(self.path).query)
+                commit = (params.get("commit") or [""])[0]
+                result = git_commit_provider(commit)
+                status = int(result.pop("status", 200)) if isinstance(result, dict) else 200
+                self.send_json(result, status)
+                return
             if path == "/health" or path.endswith("/health"):
-                self.send_json({"status": "ok", "version": "0.3.1"})
+                self.send_json({"status": "ok", "version": "0.3.2"})
                 return
             try:
                 body = UI_FILE.read_bytes()

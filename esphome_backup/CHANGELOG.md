@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2
+- Klickbar Git-historik med commit-detaljer i modal.
+- Commit-modal med översikt, filnivåstatistik och full textdiff.
+- Per fil visas additions/deletions; binära filer markeras separat.
+- Diffrespons begränsas till 2 MB för att skydda Ingress-GUI:t från mycket stora commits.
+- GUI:t förklarar att Git registrerar konfigurationsändringar, inte varje backupkörning.
+- Nytt Ingress-API: `/api/git-commit?commit=<sha>`.
+
 ## 0.3.1
 - Git-historik visas direkt i Ingress-GUI:t.
 - Live runtime-logg visas under körning och behåller de senaste loggraderna.

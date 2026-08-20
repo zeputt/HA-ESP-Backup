@@ -62,3 +62,7 @@ Home Assistant-konfigurationen är monterad read-only. GUI:t använder Home Assi
 
 ### GUI 0.3.1
 Git-historik och live runtime-logg visas i Ingress-gränssnittet. Sätt `destination_url` till en webbadress för NAS:ens File Station eller motsvarande om destinationen ska vara klickbar.
+
+
+## Git commit-detaljer (0.3.2)
+Git-historiken i GUI:t visar endast commits när ESPHome-konfigurationen faktiskt har ändrats. En backup utan konfigurationsändringar skapar alltså arkiv men ingen ny Git-commit. Klicka på en commitrad för att öppna en modal med ändrade filer, additions/deletions och full diff.
