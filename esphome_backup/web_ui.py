@@ -19,7 +19,7 @@ def start_web_server(
     port: int = 8099,
 ) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "ESPHomeBackup/0.3.2"
+        server_version = "ESPHomeBackup/0.3.3"
 
         def log_message(self, fmt: str, *args: Any) -> None:
             LOG.debug("Web: " + fmt, *args)
@@ -74,7 +74,7 @@ def start_web_server(
                 self.send_json(result, status)
                 return
             if path == "/health" or path.endswith("/health"):
-                self.send_json({"status": "ok", "version": "0.3.2"})
+                self.send_json({"status": "ok", "version": "0.3.3"})
                 return
             try:
                 body = UI_FILE.read_bytes()

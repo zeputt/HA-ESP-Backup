@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.2
+## 0.3.3
 - Klickbar Git-historik med commit-detaljer i modal.
 - Commit-modal med översikt, filnivåstatistik och full textdiff.
 - Per fil visas additions/deletions; binära filer markeras separat.

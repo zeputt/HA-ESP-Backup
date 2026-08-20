@@ -154,6 +154,12 @@ def runtime_log_snapshot(after: int = 0, limit: int = 250) -> dict[str, Any]:
     return {"lines": lines, "last_seq": current}
 
 
+GIT_HISTORY_EXCLUDE_PATHS = (
+    ":(exclude).device-builder.json",
+    ":(exclude).device-builder.json.lock",
+    ":(exclude).device-builder-preferences.json",
+)
+
 def git_history_snapshot(limit: int = 40) -> dict[str, Any]:
     repo = Path("/data/git/repo")
     if not (repo / ".git").is_dir():
@@ -170,7 +176,7 @@ def git_history_snapshot(limit: int = 40) -> dict[str, Any]:
             if len(parts) != 5:
                 continue
             full, short, authored, author, subject = parts
-            stat = run(["git", "show", "--shortstat", "--format=", full], cwd=repo, check=False).stdout.strip()
+            stat = run(["git", "show", "--shortstat", "--format=", full, "--", ".", *GIT_HISTORY_EXCLUDE_PATHS], cwd=repo, check=False).stdout.strip()
             commits.append({
                 "commit": full, "short_commit": short, "date": authored,
                 "author": author, "message": subject, "stat": stat,
@@ -203,7 +209,7 @@ def git_commit_detail_snapshot(commit: str) -> dict[str, Any]:
             raise RuntimeError("Kunde inte tolka commit metadata")
         full, short, authored, author, email, subject, body = parts
 
-        numstat = run(["git", "show", "--numstat", "--format=", "--no-renames", resolved], cwd=repo, check=False).stdout
+        numstat = run(["git", "show", "--numstat", "--format=", "--no-renames", resolved, "--", ".", *GIT_HISTORY_EXCLUDE_PATHS], cwd=repo, check=False).stdout
         files = []
         additions_total = 0
         deletions_total = 0
@@ -223,7 +229,7 @@ def git_commit_detail_snapshot(commit: str) -> dict[str, Any]:
 
         patch = run([
             "git", "show", "--format=", "--no-ext-diff", "--no-color",
-            "--find-renames", "--unified=3", resolved
+            "--find-renames", "--unified=3", resolved, "--", ".", *GIT_HISTORY_EXCLUDE_PATHS
         ], cwd=repo, check=False).stdout
         max_patch = 2_000_000
         truncated = len(patch.encode("utf-8", errors="replace")) > max_patch
@@ -571,10 +577,31 @@ def git_commit(config_source: Path, git_repo: Path, destination_git: Path, opts:
 
     # Mirror only the verified backup into the working tree. The active .git
     # directory stays on /data and is never placed on the Synology share.
+    # Device Builder metadata changes as ESPHome itself runs/installs devices.
+    # Keep it in the verified file backup, but exclude it from Git so it does
+    # not create noisy commits or diffs unrelated to user configuration.
+    git_excludes = [
+        "--exclude=.git/",
+        "--exclude=.device-builder.json",
+        "--exclude=.device-builder.json.lock",
+        "--exclude=.device-builder-preferences.json",
+    ]
     run([
         "rsync", "-rt", "--delete", "--no-perms", "--no-owner", "--no-group",
-        "--omit-dir-times", "--exclude=.git/", f"{config_source}/", f"{git_repo}/",
+        "--omit-dir-times", *git_excludes, f"{config_source}/", f"{git_repo}/",
     ])
+
+    # rsync exclusions do not remove files that may already be tracked from an
+    # older version. Remove these runtime metadata files from the Git working
+    # tree once, while leaving the source/latest backup untouched.
+    for runtime_name in (
+        ".device-builder.json",
+        ".device-builder.json.lock",
+        ".device-builder-preferences.json",
+    ):
+        runtime_path = git_repo / runtime_name
+        if runtime_path.exists() or runtime_path.is_symlink():
+            runtime_path.unlink()
     run(["git", "add", "-A"], cwd=git_repo)
     status = run(["git", "status", "--porcelain"], cwd=git_repo).stdout.strip()
     action = "unchanged"
@@ -792,7 +819,7 @@ def next_scheduled_run(schedule: str, now: dt.datetime | None = None) -> dt.date
 def main() -> int:
     load_runtime_state()
     opts = load_options()
-    LOG.info("ESPHome Backup 0.3.2 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
+    LOG.info("ESPHome Backup 0.3.3 startar. Källa: %s, destination: %s", SOURCE, opts["destination"])
     start_web_server(runtime_snapshot, request_manual_backup, runtime_log_snapshot, git_history_snapshot, git_commit_detail_snapshot, port=8099)
 
     if opts.get("run_on_start"):
